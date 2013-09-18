@@ -164,9 +164,6 @@
   "*Non-nil means that password cache is enabled.
 It is recommended to encrypt the file with EasyPG.")
 
-(defvar evernote-host ""
-  "*Hostname of Evernote/YXBJ service")
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Interface for evernote-browsing-mode.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1952,7 +1949,7 @@ It is recommended to encrypt the file with EasyPG.")
                                 enh-command-output-buffer-name
                                 evernote-ruby-command
                                 "-S" "-I" (concat eemm-install-path "/ruby/lib")
-                                enh-enclient-command evernote-host))
+                                enh-enclient-command))
       (set-process-sentinel proc 'enh-command-sentinel)
       (set-process-coding-system proc 'utf-8 'utf-8)
       (set-process-query-on-exit-flag proc nil))))
