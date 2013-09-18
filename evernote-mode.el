@@ -26,7 +26,9 @@
 ;; a directory (for example "~/lisp") and write $HOME/.emacs like this.
 ;;
 ;;      (add-to-list 'load-path "~/lisp")
+;;      (setq eemm-install-path "/home/user/emacs-evernote-mode-mod")
 ;;      (require 'evernote-mode)
+;;      (setq evernote-username "Developer Token")
 ;;      (setq evernote-enml-formatter-command '("w3m" "-dump" "-I" "UTF8" "-O" "UTF8"))
 ;;      (global-set-key "\C-cec" 'evernote-create-note)
 ;;      (global-set-key "\C-ceo" 'evernote-open-note)
@@ -161,6 +163,9 @@
 (defvar evernote-password-cache nil
   "*Non-nil means that password cache is enabled.
 It is recommended to encrypt the file with EasyPG.")
+
+(defvar evernote-host ""
+  "*Hostname of Evernote/YXBJ service")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Interface for evernote-browsing-mode.
@@ -1725,11 +1730,8 @@ It is recommended to encrypt the file with EasyPG.")
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defvar enh-enclient-command
-  (concat 
-   (with-output-to-string
-     (call-process evernote-ruby-command nil (list standard-output nil) nil
-                   "-rrbconfig" "-e" "print RbConfig::CONFIG['bindir']"))
-   "/enclient.rb")
+  (concat eemm-install-path 
+   "/ruby/bin/enclient.rb")
   "Name of the enclient.rb command")
 (defconst enh-command-process-name "Evernote-Client")
 (defconst enh-command-output-buffer-name "*Evernote-Client-Output*")
@@ -1948,7 +1950,9 @@ It is recommended to encrypt the file with EasyPG.")
               (not (eq (process-status proc) 'run)))
       (setq proc (start-process enh-command-process-name
                                 enh-command-output-buffer-name
-                                evernote-ruby-command "-S" enh-enclient-command))
+                                evernote-ruby-command
+                                "-S" "-I" (concat eemm-install-path "/ruby/lib")
+                                enh-enclient-command evernote-host))
       (set-process-sentinel proc 'enh-command-sentinel)
       (set-process-coding-system proc 'utf-8 'utf-8)
       (set-process-query-on-exit-flag proc nil))))
