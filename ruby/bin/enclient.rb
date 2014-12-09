@@ -185,6 +185,21 @@ module Evernote
       end
 
 
+      class LinkedNotebook
+        include ::EnClient::Serializable
+
+        def serialized_fields
+          { :guid => :field_type_string,
+            :shareName => :field_type_base64,
+            :username => :field_type_base64,
+            :shardId => :field_type_base64,
+            :shareKey => :field_type_base64,
+            :updateSequenceNum => :field_type_int,
+            :businessId => :field_type_int }
+        end
+      end
+
+
       class Note
         include EnClient::Serializable
 
@@ -1094,8 +1109,14 @@ module EnClient
       if @dm.during_full_sync?
         is_full_sync = true
       end
-
-      sync_chunk = note_store.getSyncChunk @sm.auth_token, usn, MAX_SYNCED_ENTRY, is_full_sync
+      sync_chunk_filter = Evernote::EDAM::NoteStore::SyncChunkFilter.new
+      sync_chunk_filter.includeNotes = true
+      sync_chunk_filter.includeNotebooks = true
+      sync_chunk_filter.includeTags = true
+      sync_chunk_filter.includeSearches = true
+      sync_chunk_filter.includeLinkedNotebooks = true
+      sync_chunk_filter.includeExpunged = true
+      sync_chunk = note_store.getFilteredSyncChunk @sm.auth_token, usn, MAX_SYNCED_ENTRY, sync_chunk_filter
       LOG.debug "sync (#{usn}-#{sync_chunk.chunkHighUSN}) full_sync = #{is_full_sync}"
       sync_db sync_chunk
 
@@ -1123,10 +1144,12 @@ module EnClient
       DBUtils.sync_updated_notes @dm, @sm, @tm, sync_chunk.notes if sync_chunk.notes
       DBUtils.sync_updated_tags @dm, sync_chunk.tags if sync_chunk.tags
       DBUtils.sync_updated_searches @dm, sync_chunk.searches if sync_chunk.searches
+      DBUtils.sync_updated_linkedNotebooks @dm, sync_chunk.linkedNotebooks if sync_chunk.linkedNotebooks
       DBUtils.sync_expunged_notebooks @dm, sync_chunk.expungedNotebooks if sync_chunk.expungedNotebooks
       DBUtils.sync_expunged_notes @dm, sync_chunk.expungedNotes, @tm if sync_chunk.expungedNotes
       DBUtils.sync_expunged_tags @dm, sync_chunk.expungedTags if sync_chunk.expungedTags
       DBUtils.sync_expunged_searches @dm, sync_chunk.expungedSearches if sync_chunk.expungedSearches
+      DBUtils.sync_expunged_linkedNotebooks @dm, sync_chunk.expungedLinkedNotebooks if sync_chunk.expungedLinkedNotebooks
       DBUtils.set_last_sync_and_usn @dm, sync_chunk.currentTime, sync_chunk.chunkHighUSN
     end
   end
@@ -1205,6 +1228,7 @@ module EnClient
     DB_LOCK             = ENMODE_SYS_DIR  + "lock"
     DB_SYNC             = ENMODE_SYS_DIR  + "sync"
     DB_NOTEBOOK         = ENMODE_SYS_DIR  + "notebook"
+    DB_LINKEDNOTEBOOK   = ENMODE_SYS_DIR  + "linkedNotebook"
     DB_NOTE             = ENMODE_SYS_DIR  + "note"
     DB_TAG              = ENMODE_SYS_DIR  + "tag"
     DB_SAVED_SEARCH     = ENMODE_SYS_DIR  + "saved_search"
@@ -1242,7 +1266,7 @@ module EnClient
 
     def clear_db
       raise IllegalStateException.new("not in transaction") unless @in_transaction
-      [DB_SYNC, DB_NOTEBOOK, DB_NOTE, DB_TAG, DB_SAVED_SEARCH].each do |file|
+      [DB_SYNC, DB_NOTEBOOK, DB_LINKEDNOTEBOOK, DB_NOTE, DB_TAG, DB_SAVED_SEARCH].each do |file|
         GDBM.open file do |db|
           db.clear
         end
@@ -1257,6 +1281,11 @@ module EnClient
     def open_notebook(&block)
       raise IllegalStateException.new("not in transaction") unless @in_transaction
       GDBM.open DB_NOTEBOOK, &block
+    end
+
+    def open_linkedNotebook(&block)
+      raise IllegalStateException.new("not in transaction") unless @in_transaction
+      GDBM.open DB_LINKEDNOTEBOOK, &block
     end
 
     def open_note(&block)
@@ -1473,6 +1502,24 @@ module EnClient
       end
     end
 
+    def self.sync_updated_linkedNotebooks(dm, linkedNotebooks)
+      dm.transaction do
+        dm.open_linkedNotebook do |db|
+          linkedNotebooks.each do |new_linkedNotebook|
+            if db.has_key? new_linkedNotebook.guid
+              current_linkedNotebook = Evernote::EDAM::Type::LinkedNotebook.new
+              current_linkedNotebook.deserialize db[new_linkedNotebook.guid]
+              if current_linkedNotebook.updateSequenceNum < new_linkedNotebook.updateSequenceNum
+                db[new_linkedNotebook.guid] = new_linkedNotebook.serialize
+              end
+            else
+              db[new_linkedNotebook.guid] = new_linkedNotebook.serialize
+            end
+          end
+        end
+      end
+    end
+
     def self.sync_updated_notes(dm, sm, tm, notes)
       dm.transaction do
         dm.open_note do |db|
@@ -1533,6 +1580,16 @@ module EnClient
     def self.sync_expunged_notebooks(dm, guids)
       dm.transaction do
         dm.open_notebook do |db|
+          guids.each do |guid|
+            db.delete guid
+          end
+        end
+      end
+    end
+
+    def self.sync_expunged_linkedNotebooks(dm, guids)
+      dm.transaction do
+        dm.open_linkedNotebook do |db|
           guids.each do |guid|
             db.delete guid
           end
