@@ -34,7 +34,7 @@ require "logger"
 require "digest/md5"
 #require "benchmark"
 
-require "evernote-thrift.rb"
+# require "evernote-thrift.rb"
 # require "thrift/types"
 # require "thrift/struct"
 # require "thrift/protocol/base_protocol"
@@ -45,6 +45,7 @@ require "evernote-thrift.rb"
 # require "Evernote/EDAM/user_store_constants"
 # require "Evernote/EDAM/note_store"
 # require "Evernote/EDAM/limits_constants"
+require 'evernote_oauth'
 
 
 module EnClient
@@ -427,13 +428,13 @@ module EnClient
 
 
   class AuthCommand < Command
-    attr_accessor :user, :passwd
+    attr_accessor :devtoken, :svchost
 
     def exec_impl
-      Formatter.to_ascii @user, @passwd
+      Formatter.to_ascii @devtoken, @svchost
 
       server_task do
-        sm.authenticate @user, @passwd
+        sm.authenticate @devtoken, @svchost
         LOG.info "Auth successed: auth_token = '#{sm.auth_token}', shared_id = '#{sm.shared_id}'"
         tm.put SyncTask.new(sm, dm, tm)
         server_task true do # defer reply until first sync will be done.
@@ -1132,13 +1133,13 @@ module EnClient
 
 
   class SessionManager
-    REFRESH_LIMIT_SEC = 300
 
     def initialize
       @auth_token = nil
       @shared_id  = nil
       @note_store = nil
       @user_store = nil
+      @client     = nil
       @expiration = nil
     end
 
@@ -1162,80 +1163,32 @@ module EnClient
       @user_store
     end
 
+    def client
+      raise NotAuthedException.new("Not authed") unless @client
+      @client
+    end
+
     def expiration
       raise NotAuthedException.new("Not authed") unless @expiration
       @expiration
     end
 
-    def authenticate(user, passwd)
-      appname = "kawayuu"
-      appid = "24b37bd1326624a0"
-      @user_store = create_user_store
-      #auth_result = @user_store.refreshAuthentication user
-      @auth_token, @shared_id, @expiration = get_session_devtoken user
-      @note_store = create_note_store @shared_id
-    end
-
-    def refresh_authentication(current_time)
-      if current_time > @expiration - REFRESH_LIMIT_SEC * 1000
-        LOG.info "refresh authentication"
-        auth_result = @user_store.refreshAuthentication @auth_token
-        @auth_token, dummy, @expiration = get_session auth_result
-        @note_store = create_note_store @shared_id
-      end
+    def authenticate(devtoken, svchost)
+      @auth_token, @shared_id, @expiration = get_session_devtoken devtoken
+      @client = EvernoteOAuth::Client.new(token: auth_token, service_host: svchost)
+      @user_store = @client.user_store
+      @note_store = @client.note_store
     end
 
     def fix_note_store
       if @shared_id
-        @note_store = create_note_store @shared_id
+        @note_store = @client.note_store
       else
         @note_store = nil
       end
     end
 
     private
-
-    def create_user_store
-      proxy_host, proxy_port = get_proxy
-
-      if proxy_host
-        user_store_transport = HTTPWithProxyClientTransport.new USER_STORE_URL, proxy_host, proxy_port
-      else
-        user_store_transport = HTTPWithProxyClientTransport.new USER_STORE_URL
-      end
-      user_store_protocol = Thrift::BinaryProtocol.new user_store_transport
-      user_store = Evernote::EDAM::UserStore::UserStore::Client.new user_store_protocol
-
-      version_ok = user_store.checkVersion("Emacs Client",
-                                           Evernote::EDAM::UserStore::EDAM_VERSION_MAJOR,
-                                           Evernote::EDAM::UserStore::EDAM_VERSION_MINOR)
-
-      unless version_ok
-        raise IllegalStateException.new("UserStore version invalid")
-      end
-      user_store
-    end
-
-    def create_note_store(shared_id)
-      note_store_url = NOTE_STORE_URL_BASE + shared_id
-
-      proxy_host, proxy_port = get_proxy
-      if proxy_host
-        note_store_transport = HTTPWithProxyClientTransport.new note_store_url, proxy_host, proxy_port
-      else
-        note_store_transport = HTTPWithProxyClientTransport.new note_store_url
-      end
-
-      note_store_protocol = Thrift::BinaryProtocol.new note_store_transport
-      Evernote::EDAM::NoteStore::NoteStore::Client.new note_store_protocol
-    end
-
-    def get_session(auth_result)
-      auth_token = auth_result.authenticationToken
-      shared_id  = auth_result.user.shardId if auth_result.user
-      expiration = auth_result.expiration
-      [auth_token, shared_id, expiration]
-    end
 
     def get_session_devtoken(devtoken)
       auth_token=devtoken
@@ -1244,15 +1197,6 @@ module EnClient
       [auth_token, shared_id, expiration]
     end
 
-    def get_proxy
-      proxy_str = ENV["EN_PROXY"]
-      if proxy_str
-        proxy_str =~ /((?:\w|\.)+):([0-9]+)/
-        [$1, $2]
-      else
-        nil
-      end
-    end
   end
 
 

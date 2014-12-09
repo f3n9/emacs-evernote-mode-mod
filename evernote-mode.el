@@ -28,7 +28,8 @@
 ;;      (add-to-list 'load-path "~/lisp")
 ;;      (setq eemm-install-path "/home/user/emacs-evernote-mode-mod")
 ;;      (require 'evernote-mode)
-;;      (setq evernote-username "Developer Token")
+;;      (setq evernote-devtoken "Developer Token")
+;;      (setq evernote-svchost "app.yinxiang.com")
 ;;      (setq evernote-enml-formatter-command '("w3m" "-dump" "-I" "UTF8" "-O" "UTF8"))
 ;;      (global-set-key "\C-cec" 'evernote-create-note)
 ;;      (global-set-key "\C-ceo" 'evernote-open-note)
@@ -550,26 +551,7 @@ It is recommended to encrypt the file with EasyPG.")
 
 (defun evernote-login ()
   "Login"
-  (interactive)
-  (if (called-interactively-p) (enh-clear-onmem-cache))
-  (unwind-protect
-      (let* ((cache (enh-password-cache-load))
-             (usernames (mapcar #'car cache))
-             (username (or evernote-username
-                           (read-string "Evernote user name:"
-                                        (car usernames) 'usernames)))
-             (cache-passwd (enutil-aget username cache)))
-        (unless (and cache-passwd
-                     (eq (catch 'error 
-                           (progn 
-                             (enh-command-login username cache-passwd)
-                             t))
-                         t))
-          (let* ((passwd (read-passwd "Passwd:")))
-            (enh-command-login username passwd)
-            (setq evernote-username username)
-            (enh-password-cache-save (enutil-aset username cache passwd)))))
-    (enh-password-cache-close)))
+  (enh-command-login evernote-devtoken evernote-svchost))
 
 
 (defun evernote-open-note (&optional ask-notebook)
@@ -1759,13 +1741,13 @@ It is recommended to encrypt the file with EasyPG.")
 (defvar enh-command-next-command-id 0)
 
 
-(defun enh-command-login (user passwd)
+(defun enh-command-login (devtoken svchost)
   "Issue login command"
   (enh-command-issue
-   (format ":class => %s, :user => %s, :passwd => %s"
+   (format ":class => %s, :devtoken => %s, :svchost => %s"
            (enutil-to-ruby-string "AuthCommand")
-           (enutil-to-ruby-string user)
-           (enutil-to-ruby-string passwd))))
+           (enutil-to-ruby-string devtoken)
+           (enutil-to-ruby-string svchost))))
 
 
 (defun enh-command-get-notebook-attrs ()
