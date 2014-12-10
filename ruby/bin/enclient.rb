@@ -418,6 +418,7 @@ module EnClient
         [AuthCommand,
          ListNoteCommand,
          ListNotebookCommand,
+         ListLinkedNotebookCommand,
          ListTagCommand,
          ListSearchCommand,
          SearchNoteCommand,
@@ -821,6 +822,45 @@ module EnClient
   end
 
 
+  class ListLinkedNotebookCommand < Command
+    @@issued_before = false
+
+    def exec_impl
+      check_auth
+      if dm.during_full_sync? && !@@issued_before
+        get_result_from_server
+      else
+        get_result_from_local_cache
+      end
+    end
+
+    private
+
+    def get_result_from_local_cache
+      LOG.debug "return linked notebooks from cache"
+      linkedNotebooks = DBUtils.get_all_linkedNotebooks dm
+      linkedNotebooks.sort! do |a, b|
+        a.shareName <=> b.shareName
+      end
+      reply = ListLinkedNotebookReply.new
+      reply.linkedNotebooks = linkedNotebooks
+      shell.reply self, reply
+    end
+
+    def get_result_from_server
+      server_task do
+        LOG.debug "return linked notebooks from server"
+        linkedNotebooks = sm.note_store.listLinkedNotebooks sm.auth_token
+        DBUtils.sync_updated_linkedNotebooks dm, linkedNotebooks
+        reply = ListLinkedNotebookReply.new
+        reply.linkedNotebooks = linkedNotebooks
+        @@issued_before = true
+        shell.reply self, reply
+      end
+    end
+  end
+
+
   class ListNoteCommand < Command
     attr_accessor :tag_guids, :notebook_guid
 
@@ -984,6 +1024,11 @@ module EnClient
 
   class ListNotebookReply < Reply
     attr_accessor :notebooks
+  end
+
+
+  class ListLinkedNotebookReply < Reply
+    attr_accessor :linkedNotebooks
   end
 
 
@@ -1385,6 +1430,20 @@ module EnClient
         end
       end
       notebooks
+    end
+
+    def self.get_all_linkedNotebooks(dm)
+      linkedNotebooks = []
+      dm.transaction do
+        dm.open_linkedNotebook do |db|
+          db.each_value do |value|
+            lnb = Evernote::EDAM::Type::LinkedNotebook.new
+            lnb.deserialize value
+            linkedNotebooks << lnb
+          end
+        end
+      end
+      linkedNotebooks
     end
 
     def self.get_note(dm, guid)
