@@ -186,6 +186,7 @@ It is recommended to encrypt the file with EasyPG.")
 (define-key evernote-browsing-mode-map "n"    'evernote-browsing-open-next-note)
 (define-key evernote-browsing-mode-map "p"    'evernote-browsing-open-previous-note)
 (define-key evernote-browsing-mode-map "N"    'evernote-browsing-list-notebooks)
+(define-key evernote-browsing-mode-map "L"    'evernote-browsing-list-linked-notebooks)
 (define-key evernote-browsing-mode-map "t"    'evernote-browsing-list-tags)
 (define-key evernote-browsing-mode-map "S"    'evernote-browsing-list-searches)
 (define-key evernote-browsing-mode-map "s"    'evernote-browsing-search-notes)
@@ -239,7 +240,7 @@ It is recommended to encrypt the file with EasyPG.")
 
 
 (defun evernote-browsing-list-notebooks ()
-  "List tags"
+  "List notebooks"
   (interactive)
   (if (called-interactively-p) (enh-clear-onmem-cache))
   (enh-browsing-update-page-list)
@@ -250,6 +251,20 @@ It is recommended to encrypt the file with EasyPG.")
           (switch-to-buffer page))
       (enh-browsing-push-page
        (enh-browsing-create-page 'notebook-list "All Notebooks")))))
+
+
+(defun evernote-browsing-list-linked-notebooks ()
+  "List linked notebooks"
+  (interactive)
+  (if (called-interactively-p) (enh-clear-onmem-cache))
+  (enh-browsing-update-page-list)
+  (let ((page (enh-browsing-get-page-of-type 'linked-notebook-list)))
+    (if page
+        (progn
+          (setq evernote-browsing-current-page page)
+          (switch-to-buffer page))
+      (enh-browsing-push-page
+       (enh-browsing-create-page 'linked-notebook-list "All Linked Notebooks")))))
 
 
 (defun evernote-browsing-list-tags ()
@@ -507,6 +522,9 @@ It is recommended to encrypt the file with EasyPG.")
                 :visible (enh-menu-is-visible-on-evernote-browsing-mode)))
   (define-key menu-bar-map [browsing-list-notebooks]
     '(menu-item "List Notebooks" evernote-browsing-list-notebooks
+                :visible (enh-menu-is-visible-on-evernote-browsing-mode)))
+  (define-key menu-bar-map [browsing-list-linked-notebooks]
+    '(menu-item "List Linked Notebooks" evernote-browsing-list-linked-notebooks
                 :visible (enh-menu-is-visible-on-evernote-browsing-mode))))
 
 
@@ -1371,7 +1389,7 @@ It is recommended to encrypt the file with EasyPG.")
 
 
 (defun enh-browsing-open-notebook (widget &rest ignored)
-  "Open a saved search in browsing mode"
+  "List notes of a notebook in browsing mode"
   (enh-clear-onmem-cache)
   (let* ((guid (widget-value widget)) note-attrs)
     (enh-command-with-auth
@@ -1385,6 +1403,24 @@ It is recommended to encrypt the file with EasyPG.")
                                                     (enh-get-notebook-attr guid)))
                                note-attrs
                                `(lambda () (enh-command-get-note-attrs-from-notebook-and-tag-guids
+                                            ,guid nil))))))
+
+
+(defun enh-browsing-open-linked-notebook (widget &rest ignored)
+  "List notes of a linked notebook in browsing mode"
+  (enh-clear-onmem-cache)
+  (let* ((guid (widget-value widget)) note-attrs)
+    (enh-command-with-auth
+     (setq note-attrs
+           (enh-command-get-note-attrs-from-linked-notebook-and-tag-guids guid nil)))
+    (enh-browsing-update-page-list)
+    (enh-browsing-push-page
+     (enh-browsing-create-page 'note-in-linked-notebook-list
+                               (format "Notes in Linked Notebook: %s"
+                                       (enutil-aget 'shareName
+                                                    (enh-get-linked-notebook-attr guid)))
+                               note-attrs
+                               `(lambda () (enh-command-get-note-attrs-from-linked-notebook-and-tag-guids
                                             ,guid nil))))))
 
 
@@ -1477,6 +1513,9 @@ It is recommended to encrypt the file with EasyPG.")
        ((eq type 'notebook-list)
         (setq enh-browsing-page-setup-func
               'enh-browsing-setup-notebook-list-page))
+       ((eq type 'linked-notebook-list)
+        (setq enh-browsing-page-setup-func
+              'enh-browsing-setup-linked-notebook-list-page))
        ((eq type 'tag-list)
         (setq enh-browsing-page-setup-func
               'enh-browsing-setup-tag-list-page))
@@ -1485,7 +1524,10 @@ It is recommended to encrypt the file with EasyPG.")
               'enh-browsing-setup-search-list-page))
        ((eq type 'note-list)
         (setq enh-browsing-page-setup-func
-              'enh-browsing-setup-note-list-page)))
+              'enh-browsing-setup-note-list-page))
+       ((eq type 'note-in-linked-notebook-list)
+        (setq enh-browsing-page-setup-func
+              'enh-browsing-setup-note-in-linked-notebook-list-page)))
       (evernote-browsing-mode))
     buf))
 
@@ -1517,6 +1559,37 @@ It is recommended to encrypt the file with EasyPG.")
                                   "Name"
                                   "Default"))
                    ,@(nreverse notebook-list)))))
+  (widget-setup)
+  (goto-char (point-min)))
+
+
+(defun enh-browsing-setup-linked-notebook-list-page ()
+  "Insert linked notebook list into the browsing buffer"
+  (when enh-browsing-page-widget-root
+    (widget-delete enh-browsing-page-widget-root)
+    (setq enh-browsing-page-widget-root nil))
+  (let ((linked-notebook-list nil))
+    (maphash
+     (lambda (guid attr)
+       (let ((attr (enh-get-linked-notebook-attr guid)))
+         (enutil-push `(push-button
+                        :tag ,(format "%-60s   %s"
+                                      (enutil-aget 'shareName attr)
+                                      (enutil-aget 'username attr))
+                        :format "%[%t%]\n"
+                        :notify enh-browsing-open-linked-notebook
+                        ,guid)
+                      linked-notebook-list)))
+     (enh-get-linked-notebook-attrs))
+    (setq enh-browsing-page-widget-root
+          (apply 'widget-create
+                 `(group
+                   (item ,(format "%s\n\ntotal %d\n%-60s   %s\n"
+                                  enh-browsing-page-description
+                                  (hash-table-count (enh-get-linked-notebook-attrs))
+                                  "Name"
+                                  "Owner"))
+                   ,@(nreverse linked-notebook-list)))))
   (widget-setup)
   (goto-char (point-min)))
 
@@ -1631,6 +1704,50 @@ It is recommended to encrypt the file with EasyPG.")
                                   (length note-attrs)
                                   "Last Modified"
                                   "Notebook"
+                                  "Tags"
+                                  "Mode"
+                                  "Name"))
+                   ,@(nreverse note-list)))))
+  (widget-setup)
+  (goto-char (point-min)))
+
+
+(defun enh-browsing-setup-note-in-linked-notebook-list-page ()
+  "Insert note list into the browsing buffer"
+  (when enh-browsing-page-widget-root
+    (widget-delete enh-browsing-page-widget-root)
+    (setq enh-browsing-page-widget-root nil))
+  (when (and (null enh-browsing-page-data)
+             enh-browsing-page-data-refresh-closure)
+    (setq enh-browsing-page-data (funcall enh-browsing-page-data-refresh-closure)))
+  (clrhash enh-tag-info)
+  (let ((note-attrs enh-browsing-page-data)
+        (note-list nil))
+    (mapc
+     (lambda (attr)
+       (enutil-push `(push-button
+                      :tag ,(format "%-30s   %-20s   %-15s   %4s   %s"
+                                    (enutil-aget 'updated attr)
+                                    (enutil-aget 'shareName
+                                                 (enh-get-linked-notebook-attr (substring (enutil-aget 'notebookGuid attr) 2 nil)))
+                                    (enh-tag-guids-to-comma-separated-names
+                                     (enutil-aget 'tagGuids attr)
+                                     15)
+                                    (enutil-aget 'editMode attr)
+                                    (enutil-aget 'title attr))
+                      :format "%[%t%]\n"
+                      :notify enh-browsing-open-note
+                      ,(enutil-aget 'guid attr))
+                    note-list))
+     note-attrs)
+    (setq enh-browsing-page-widget-root
+          (apply 'widget-create
+                 `(group
+                   (item ,(format "%s\n\ntotal %d\n%-30s   %-20s   %-15s   %4s   %s\n"
+                                  enh-browsing-page-description
+                                  (length note-attrs)
+                                  "Last Modified"
+                                  "Linked Notebook"
                                   "Tags"
                                   "Mode"
                                   "Name"))
@@ -1758,6 +1875,14 @@ It is recommended to encrypt the file with EasyPG.")
     (enutil-aget 'notebooks reply)))
 
 
+(defun enh-command-get-linked-notebook-attrs ()
+  "Issue listLinkedNotebooks command"
+  (let ((reply (enh-command-issue
+                (format ":class => %s"
+                        (enutil-to-ruby-string "ListLinkedNotebookCommand")))))
+    (enutil-aget 'linkedNotebooks reply)))
+
+
 (defun enh-command-get-tag-attrs ()
   "Issue listtags command"
   (let ((reply (enh-command-issue
@@ -1782,6 +1907,17 @@ It is recommended to encrypt the file with EasyPG.")
                 (format ":class => %s, :notebook_guid => %s, :tag_guids => %s"
                         (enutil-to-ruby-string "ListNoteCommand")
                         (enutil-to-ruby-string notebook-guid)
+                        (enutil-to-ruby-string-list tag-guids nil)))))
+    (enutil-aget 'notes reply)))
+
+
+(defun enh-command-get-note-attrs-from-linked-notebook-and-tag-guids (linked-notebook-guid tag-guids)
+  "Issue listnotes command from the linked notebook guid and the tag guids."
+  (message "linked-notebook %s" linked-notebook-guid)
+  (let ((reply (enh-command-issue
+                (format ":class => %s, :notebook_guid => %s, :tag_guids => %s"
+                        (enutil-to-ruby-string "ListNoteInLinkedNotebookCommand")
+                        (enutil-to-ruby-string linked-notebook-guid)
                         (enutil-to-ruby-string-list tag-guids nil)))))
     (enutil-aget 'notes reply)))
 
@@ -1945,6 +2081,10 @@ It is recommended to encrypt the file with EasyPG.")
   "Notebook info associated with the guid")
 
 
+(defvar enh-linked-notebook-info (make-hash-table :test #'equal)
+  "Linked notebook info associated with the guid")
+
+
 (defvar enh-tag-info (make-hash-table :test #'equal)
   "Tag info associated with the guid")
 
@@ -1971,6 +2111,15 @@ It is recommended to encrypt the file with EasyPG.")
        (puthash (enutil-aget 'guid attr) attr enh-notebook-info))
      (enh-command-get-notebook-attrs)))
   enh-notebook-info)
+
+
+(defun enh-get-linked-notebook-attrs ()
+  (when (eq (hash-table-count enh-linked-notebook-info) 0)
+    (mapc
+     (lambda (attr)
+       (puthash (enutil-aget 'guid attr) attr enh-linked-notebook-info))
+     (enh-command-get-linked-notebook-attrs)))
+  enh-linked-notebook-info)
 
 
 (defun enh-get-tag-attrs ()
@@ -2002,6 +2151,11 @@ It is recommended to encrypt the file with EasyPG.")
 (defun enh-get-notebook-attr (guid)
   "Get the notebook attr from the guid"
   (gethash guid (enh-get-notebook-attrs)))
+
+
+(defun enh-get-linked-notebook-attr (guid)
+  "Get the linked notebook attr from the guid"
+  (gethash guid (enh-get-linked-notebook-attrs)))
 
 
 (defun enh-get-tag-attr (guid)
@@ -2065,6 +2219,7 @@ It is recommended to encrypt the file with EasyPG.")
 
 (defun enh-clear-onmem-cache ()
   (clrhash enh-notebook-info)
+  (clrhash enh-linked-notebook-info)
   (clrhash enh-tag-info)
   (clrhash enh-search-info)
   (setq enh-note-attr nil))

@@ -188,14 +188,21 @@ module Evernote
       class LinkedNotebook
         include ::EnClient::Serializable
 
+        attr_accessor :lastSyncedUSN, :lastSyncedTime, :target_guid
+
         def serialized_fields
           { :guid => :field_type_string,
             :shareName => :field_type_base64,
             :username => :field_type_base64,
-            :shardId => :field_type_base64,
-            :shareKey => :field_type_base64,
+            :shardId => :field_type_string,
+            :shareKey => :field_type_string,
+            :uri => :field_type_string,
             :updateSequenceNum => :field_type_int,
-            :businessId => :field_type_int }
+            :noteStoreUrl => :field_type_string,
+            :businessId => :field_type_int,
+            :lastSyncedUSN => :field_type_int,
+            :lastSyncedTime => :field_type_timestamp,
+            :target_guid => :field_type_string}
         end
       end
 
@@ -417,6 +424,7 @@ module EnClient
       all_commands =
         [AuthCommand,
          ListNoteCommand,
+         ListNoteInLinkedNotebookCommand,
          ListNotebookCommand,
          ListLinkedNotebookCommand,
          ListTagCommand,
@@ -731,11 +739,19 @@ module EnClient
       filter.order = Evernote::EDAM::Type::NoteSortOrder::UPDATED
       filter.words = @query
 
+      resultspec = Evernote::EDAM::NoteStore::NotesMetadataResultSpec.new
+      resultspec.includeTitle = true
+      includeCreated = true
+      includeUpdated = true
+      includeUpdateSequenceNum = true
+      includeNotebookGuid = true
+      includeTagGuids = true
+
       server_task do
-        notelist = sm.note_store.findNotes sm.auth_token, filter, 0, Evernote::EDAM::Limits::EDAM_USER_NOTES_MAX
-        DBUtils.sync_updated_notes dm, sm, tm, notelist.notes
+        notemetadatalist = sm.note_store.findNotesMetadata sm.auth_token, filter, 0, Evernote::EDAM::Limits::EDAM_USER_NOTES_MAX, resultspec
+        DBUtils.sync_updated_notes dm, sm, tm, notemetadatalist.notes
         reply = SearchNoteReply.new
-        reply.notes = notelist.notes
+        reply.notes = notemetadatalist.notes
         shell.reply self, reply
       end
     end
@@ -911,14 +927,166 @@ module EnClient
         filter.tagGuids = @tag_guids
         filter.notebookGuid = @notebook_guid
 
-        notelist = sm.note_store.findNotes(sm.auth_token,
+        resultspec = Evernote::EDAM::NoteStore::NotesMetadataResultSpec.new
+        resultspec.includeTitle = true
+        includeCreated = true
+        includeUpdated = true
+        includeUpdateSequenceNum = true
+        includeNotebookGuid = true
+        includeTagGuids = true
+
+        notemetadatalist = sm.note_store.findNotesMetadata(sm.auth_token,
                                            filter,
                                            0,
-                                           Evernote::EDAM::Limits::EDAM_USER_NOTES_MAX)
-        DBUtils.sync_updated_notes dm, sm, tm, notelist.notes
+                                           Evernote::EDAM::Limits::EDAM_USER_NOTES_MAX,
+                                           resultspec)
+        DBUtils.sync_updated_notes dm, sm, tm, notemetadatalist.notes
         reply = ListNoteReply.new
-        reply.notes = notelist.notes
+        reply.notes = notemetadatalist.notes
         shell.reply self, reply
+      end
+    end
+  end
+
+
+  class ListNoteInLinkedNotebookCommand < Command
+    attr_accessor :tag_guids, :notebook_guid
+
+    def initialize
+      @tag_guids = []
+    end
+
+    def exec_impl
+      check_auth
+      sync_linkedNotebook
+
+      LOG.debug "return notes from cache"
+      notes = []
+      dm.transaction do
+        dm.open_note do |db|
+          db.each_value do |value|
+            n = Evernote::EDAM::Type::Note.new
+            n.deserialize value
+            if @tag_guids == nil || (n.tagGuids != nil && (@tag_guids - n.tagGuids).empty?)
+              if @notebook_guid == nil || "l-"+@notebook_guid == n.notebookGuid
+                notes << n
+              end
+            end
+          end
+        end
+      end
+      notes.sort! do |a, b|
+        b.updated <=> a.updated
+      end
+      reply = ListNoteReply.new
+      reply.notes = notes
+      shell.reply self, reply
+    end
+
+    private
+
+    def sync_linkedNotebook
+      LOG.debug "sync linked notebook from server"
+      linkedNotebook = Evernote::EDAM::Type::LinkedNotebook.new
+      dm.transaction do
+        dm.open_linkedNotebook do |db|
+          if db.has_key? @notebook_guid
+            linkedNotebook.deserialize db[@notebook_guid]
+            linkedNotebook.shareName.force_encoding Encoding::UTF_8
+            linked_note_store = nil
+            if linkedNotebook.shareKey
+              linked_note_store = sm.client.shared_note_store(linkedNotebook)
+            else
+              public_user_info = sm.user_store.getPublicUserInfo linkedNotebook.username
+              linked_note_store = sm.client.note_store(note_store_url: public_user_info.noteStoreUrl)
+            end
+            sync_state = linked_note_store.getLinkedNotebookSyncState(sm.auth_token, linkedNotebook)
+            LOG.info "[sync state begin]"
+            LOG.info "currentTime    = #{sync_state.currentTime}"
+            LOG.info "updateCount    = #{sync_state.updateCount}"
+            LOG.info "lastSyncedUSN  = #{linkedNotebook.lastSyncedUSN}"
+            LOG.info "target_guid    = #{linkedNotebook.target_guid}"
+            LOG.info "[sync state end]"
+
+            if sync_state.updateCount > linkedNotebook.lastSyncedUSN
+              need_sync = true
+              while need_sync
+                begin
+                  sync_chunk = linked_note_store.getLinkedNotebookSyncChunk(sm.auth_token,
+                                                                          linkedNotebook,
+                                                                          linkedNotebook.lastSyncedUSN,
+                                                                          100,true)
+                  if sync_chunk.chunkHighUSN == nil
+                    need_sync = false
+                  else
+                    if sync_chunk.notes
+                      dm.open_note do |notedb|
+                        sync_chunk.notes.each do |new_note|
+                          new_note.guid = linkedNotebook.shardId+"-"+new_note.guid
+                          #new_note.notebookGuid = linkedNotebook.shardId+"-"+new_note.notebookGuid
+                          new_note.notebookGuid = "l-"+@notebook_guid
+                          if new_note.tagGuids
+                            new_note.tagGuids.each_with_index do |tagGuid,index|
+                              new_note.tagGuids[index] = linkedNotebook.shardId+"-"+tagGuid
+                            end
+                          end
+                          # this method set editMode.
+                          new_note.editMode = Formatter.get_edit_mode new_note.attributes.sourceApplication
+                          LOG.warn new_note.inspect
+                          if notedb.has_key? new_note.guid
+                            current_note = Evernote::EDAM::Type::Note.new
+                            current_note.deserialize notedb[new_note.guid]
+                            if current_note.updateSequenceNum < new_note.updateSequenceNum
+                              dm.remove_note_content new_note.guid # remove content cache if updated
+                              notedb[new_note.guid] = new_note.serialize # update note info
+                            end
+                          else
+                            notedb[new_note.guid] = new_note.serialize
+                          end
+                        end
+                      end
+                    end
+                    if sync_chunk.tags
+                      dm.open_tag do |tagdb|
+                        sync_chunk.tags.each do |new_tag|
+                          new_tag.guid = linkedNotebook.shardId+"-"+new_tag.guid
+                          LOG.warn new_tag.inspect
+                          if tagdb.has_key? new_tag.guid
+                            current_tag = Evernote::EDAM::Type::Tag.new
+                            current_tag.deserialize tagdb[new_tag.guid]
+                            if current_tag.updateSequenceNum < new_tag.updateSequenceNum
+                              tagdb[new_tag.guid] = new_tag.serialize
+                            end
+                          else
+                            tagdb[new_tag.guid] = new_tag.serialize
+                          end
+                        end
+                      end
+                    end
+                    linkedNotebook.lastSyncedUSN = sync_chunk.chunkHighUSN
+                    linkedNotebook.lastSyncedTime = sync_chunk.currentTime
+                    if sync_chunk.notebooks != nil && sync_chunk.notebooks.size == 1
+                      linkedNotebook.target_guid = sync_chunk.notebooks.at(0).guid
+                    end
+                    if sync_chunk.chunkHighUSN == sync_chunk.updateCount
+                      need_sync = false
+                    end
+                  end
+                rescue
+                  if $!.is_a? SystemCallError
+                    # workaround for corruption of note_store after timed out
+                    @sm.fix_note_store
+                  end
+                  LOG.warn $!.backtrace
+                  next
+                end
+              end
+            end
+            db[@notebook_guid] = linkedNotebook.serialize
+          else
+            raise NotFoundException.new("LinkedNotebook guid #{@notebook_guid} is not found")
+          end
+        end
       end
     end
   end
@@ -1565,10 +1733,12 @@ module EnClient
       dm.transaction do
         dm.open_linkedNotebook do |db|
           linkedNotebooks.each do |new_linkedNotebook|
+            new_linkedNotebook.lastSyncedUSN = 0
             if db.has_key? new_linkedNotebook.guid
               current_linkedNotebook = Evernote::EDAM::Type::LinkedNotebook.new
               current_linkedNotebook.deserialize db[new_linkedNotebook.guid]
               if current_linkedNotebook.updateSequenceNum < new_linkedNotebook.updateSequenceNum
+                new_linkedNotebook.lastSyncedUSN = current_linkedNotebook.lastSyncedUSN
                 db[new_linkedNotebook.guid] = new_linkedNotebook.serialize
               end
             else
