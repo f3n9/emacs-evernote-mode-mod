@@ -561,6 +561,8 @@ module EnClient
       set_attribute_and_format_content! note
 
       server_task do
+        note.content.force_encoding Encoding::UTF_8
+        note.title.force_encoding Encoding::UTF_8
         result_note = sm.note_store.updateNote sm.auth_token, note
         result_note.editMode = note.editMode
         DBUtils.set_note_and_content dm, result_note, @content
@@ -764,13 +766,33 @@ module EnClient
     def exec_impl
       check_auth
       note = DBUtils.get_note dm, @guid
+      realguid = @guid.gsub(/^s[0-9]*-/,'')
+      linkedNotebook = nil
+      if @guid.start_with? "s"
+        linkedNotebook = DBUtils.get_linkedNotebook dm, note.notebookGuid
+      end
       if note && note.contentFile && (FileTest.readable? note.contentFile)
         reply = GetNoteReply.new
         reply.note = note
         shell.reply self, reply
       else
         server_task do
-          note = sm.note_store.getNote sm.auth_token, @guid, true, false, false, false
+          note = nil
+          if @guid.start_with? "s"
+            linked_note_store = nil
+            authtoken = sm.auth_token
+            if linkedNotebook.shareKey
+              linked_note_store = sm.client.shared_note_store(linkedNotebook)
+              authkey = linked_note_store.authenticateToSharedNotebook(linkedNotebook.shareKey,sm.auth_token)
+              authtoken = authkey.authenticationToken
+            else
+              public_user_info = sm.user_store.getPublicUserInfo linkedNotebook.username
+              linked_note_store = sm.client.note_store(note_store_url: public_user_info.noteStoreUrl)
+            end
+            note = linked_note_store.getNote authtoken, realguid, true, false, false, false
+          else
+            note = sm.note_store.getNote sm.auth_token, @guid, true, false, false, false
+          end
           note.editMode = Formatter.get_edit_mode note.attributes.sourceApplication
           content = format_content note.content, note.editMode
           DBUtils.set_note_and_content dm, note, content
@@ -1612,6 +1634,20 @@ module EnClient
         end
       end
       linkedNotebooks
+    end
+
+    def self.get_linkedNotebook(dm, guid)
+      realguid = guid.gsub(/^l-/,'')
+      linkedNotebook = nil
+      dm.transaction do
+        dm.open_linkedNotebook do |db|
+          if db.has_key? realguid
+            linkedNotebook = Evernote::EDAM::Type::LinkedNotebook.new
+            linkedNotebook.deserialize db[realguid]
+          end
+        end
+      end
+      linkedNotebook
     end
 
     def self.get_note(dm, guid)
