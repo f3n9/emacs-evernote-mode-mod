@@ -1,16 +1,16 @@
 emacs-evernote-mode-mod
 =======================
-* WHAT'S THIS?
+# WHAT'S THIS?
 This is a modified version of Evernote-Mode for Emacs, originally authored by Yusuke KAWAKAMI and Akihiro ARISAWA,
 hosted on http://code.google.com/p/emacs-evernote-mode/.
 
-* WHAT'S NEW?
-** Support of local Evernote service in China, a.k.a YXBJ
-** Use developer token instead of the old api-key, since OAuth is mandatory for API-Key authentication with Evernote.
-** Open linked notebooks, including publich notebooks, notebooks shared by others, and joined business notebooks
-** Open and update notes in linked notebooks with write permission
+# WHAT'S NEW?
+## Support of local Evernote service in China, a.k.a YXBJ
+## Use developer token instead of the old api-key, since OAuth is mandatory for API-Key authentication with Evernote.
+## Open linked notebooks, including publich notebooks, notebooks shared by others, and joined business notebooks
+## Open and update notes in linked notebooks with write permission
 
-* INSTALL
+# INSTALL
 1. Emacs 23.1 or later is required
 2. Copy evernote-mode.el into a directory in Emacs' load-path
 3. Add the following in your ~/.emacs
