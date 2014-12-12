@@ -16,6 +16,7 @@ This is a modified version of Evernote-Mode for Emacs, originally authored by Yu
 1. Emacs 23.1 or later is required
 2. Copy evernote-mode.el into a directory in Emacs' load-path
 3. Add the following in your ~/.emacs
+
     (add-to-list 'load-path "~/lisp")
     (setq eemm-install-path "<where this repo was checked out>")
     (require 'evernote-mode)
