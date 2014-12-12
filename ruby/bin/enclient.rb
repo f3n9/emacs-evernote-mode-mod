@@ -566,8 +566,6 @@ module EnClient
         result_note = nil
         if old_note.guid.start_with? "s"
           note.guid = note.guid.gsub(/^s[0-9]*-/,'')
-          LOG.warn note.inspect
-          LOG.warn old_note.inspect
           linkedNotebook = DBUtils.get_linkedNotebook dm, old_note.notebookGuid
           linked_note_store = nil
           authtoken = sm.auth_token
@@ -1086,7 +1084,6 @@ module EnClient
                           end
                           # this method set editMode.
                           new_note.editMode = Formatter.get_edit_mode new_note.attributes.sourceApplication
-                          LOG.warn new_note.inspect
                           if notedb.has_key? new_note.guid
                             current_note = Evernote::EDAM::Type::Note.new
                             current_note.deserialize notedb[new_note.guid]
@@ -1104,7 +1101,6 @@ module EnClient
                       dm.open_tag do |tagdb|
                         sync_chunk.tags.each do |new_tag|
                           new_tag.guid = linkedNotebook.shardId+"-"+new_tag.guid
-                          LOG.warn new_tag.inspect
                           if tagdb.has_key? new_tag.guid
                             current_tag = Evernote::EDAM::Type::Tag.new
                             current_tag.deserialize tagdb[new_tag.guid]
