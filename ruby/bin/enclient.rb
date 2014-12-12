@@ -286,40 +286,6 @@ module EnClient
   class IllegalStateException < StandardError; end
 
 
-  class HTTPWithProxyClientTransport < Thrift::BaseTransport
-    def initialize(url, proxy_addr = nil, proxy_port = nil)
-      @url = URI url
-      @headers = {'Content-Type' => 'application/x-thrift'}
-      @outbuf = ""
-      @proxy_addr = proxy_addr
-      @proxy_port = proxy_port
-    end
-
-    def open?; true end
-    def read(sz); @inbuf.read sz end
-    def write(buf); @outbuf << buf end
-
-    def add_headers(headers)
-      @headers = @headers.merge(headers)
-    end
-
-    def flush
-      if @proxy_addr && @proxy_port
-        http = Net::HTTP::Proxy(@proxy_addr, @proxy_port).new @url.host, @url.port
-      else
-        http = Net::HTTP.new @url.host, @url.port
-      end
-      http.use_ssl = @url.scheme == "https"
-      #http.verify_mode = OpenSSL::SSL::VERIFY_PEER
-      #http.verify_depth = 5
-      http.verify_mode = OpenSSL::SSL::VERIFY_NONE
-      resp = http.post(@url.request_uri, @outbuf, @headers)
-      @inbuf = StringIO.new resp.body
-      @outbuf = ""
-    end
-  end
-
-
   class TaskQueue
     def initialize
       @cond = ConditionVariable.new
