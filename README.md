@@ -18,12 +18,12 @@ This is a modified version of Evernote-Mode for Emacs, originally authored by Yu
 3. Add the following in your ~/.emacs
 
 ```lisp
-    (add-to-list 'load-path "~/lisp")
-    (setq eemm-install-path "<where this repo was checked out>")
+    (add-to-list 'load-path "<path to the directory of evernote-mode.el>")
+    (setq eemm-install-path "<path to the directory of checked out repo>")
     (require 'evernote-mode)
     ;; supported evernote-svchost are: www.evernote.com, app.yinxiang.com, sandbox.evernote.com etc.
     (setq evernote-svchost "app.yinxiang.com")
-    (setq evernote-devtoken "Developer Token")
+    (setq evernote-devtoken "<developer token, see https://{'evernote-svchost}/api/DeveloperToken.action >")
     (setq evernote-enml-formatter-command '("w3m" "-dump" "-I" "UTF8" "-O" "UTF8"))
     (global-set-key "\C-cec" 'evernote-create-note)
     (global-set-key "\C-ceo" 'evernote-open-note)
