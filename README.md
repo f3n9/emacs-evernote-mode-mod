@@ -17,6 +17,7 @@ This is a modified version of Evernote-Mode for Emacs, originally authored by Yu
 2. Copy evernote-mode.el into a directory in Emacs' load-path
 3. Add the following in your ~/.emacs
 
+```lisp
     (add-to-list 'load-path "~/lisp")
     (setq eemm-install-path "<where this repo was checked out>")
     (require 'evernote-mode)
@@ -31,4 +32,4 @@ This is a modified version of Evernote-Mode for Emacs, originally authored by Yu
     (global-set-key "\C-cew" 'evernote-write-note)
     (global-set-key "\C-cep" 'evernote-post-region)
     (global-set-key "\C-ceb" 'evernote-browser)
-
+```
