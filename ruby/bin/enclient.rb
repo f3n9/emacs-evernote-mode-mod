@@ -563,7 +563,34 @@ module EnClient
       server_task do
         note.content.force_encoding Encoding::UTF_8
         note.title.force_encoding Encoding::UTF_8
-        result_note = sm.note_store.updateNote sm.auth_token, note
+        result_note = nil
+        if old_note.guid.start_with? "s"
+          note.guid = note.guid.gsub(/^s[0-9]*-/,'')
+          LOG.warn note.inspect
+          LOG.warn old_note.inspect
+          linkedNotebook = DBUtils.get_linkedNotebook dm, old_note.notebookGuid
+          linked_note_store = nil
+          authtoken = sm.auth_token
+          if linkedNotebook.shareKey
+            linked_note_store = sm.client.shared_note_store(linkedNotebook)
+            authkey = linked_note_store.authenticateToSharedNotebook(linkedNotebook.shareKey,sm.auth_token)
+            authtoken = authkey.authenticationToken
+          else
+            public_user_info = sm.user_store.getPublicUserInfo linkedNotebook.username
+            linked_note_store = sm.client.note_store(note_store_url: public_user_info.noteStoreUrl)
+          end
+          result_note = linked_note_store.updateNote authtoken, note
+          result_note.guid = old_note.guid
+          result_note.notebookGuid = old_note.notebookGuid
+          if result_note.tagGuids
+            result_note.tagGuids.each_with_index do |tagGuid,index|
+              result_note.tagGuids[index] = linkedNotebook.shardId+"-"+tagGuid
+            end
+          end
+        else
+          result_note = sm.note_store.updateNote sm.auth_token, note
+        end
+
         result_note.editMode = note.editMode
         DBUtils.set_note_and_content dm, result_note, @content
         reply = UpdateNoteReply.new
@@ -765,33 +792,38 @@ module EnClient
 
     def exec_impl
       check_auth
-      note = DBUtils.get_note dm, @guid
-      realguid = @guid.gsub(/^s[0-9]*-/,'')
-      linkedNotebook = nil
-      if @guid.start_with? "s"
-        linkedNotebook = DBUtils.get_linkedNotebook dm, note.notebookGuid
-      end
-      if note && note.contentFile && (FileTest.readable? note.contentFile)
+      old_note = DBUtils.get_note dm, @guid
+      if old_note && old_note.contentFile && (FileTest.readable? old_note.contentFile)
         reply = GetNoteReply.new
-        reply.note = note
+        reply.note = old_note
         shell.reply self, reply
       else
+        realguid = @guid.gsub(/^s[0-9]*-/,'')
+        real_note_store = sm.note_store
+        real_auth_token = sm.auth_token
         server_task do
           note = nil
+          linkedNotebook = nil
           if @guid.start_with? "s"
-            linked_note_store = nil
-            authtoken = sm.auth_token
+            linkedNotebook = DBUtils.get_linkedNotebook dm, old_note.notebookGuid
             if linkedNotebook.shareKey
-              linked_note_store = sm.client.shared_note_store(linkedNotebook)
-              authkey = linked_note_store.authenticateToSharedNotebook(linkedNotebook.shareKey,sm.auth_token)
-              authtoken = authkey.authenticationToken
+              real_note_store = sm.client.shared_note_store(linkedNotebook)
+              authkey = real_note_store.authenticateToSharedNotebook(linkedNotebook.shareKey,sm.auth_token)
+              real_auth_token = authkey.authenticationToken
             else
               public_user_info = sm.user_store.getPublicUserInfo linkedNotebook.username
-              linked_note_store = sm.client.note_store(note_store_url: public_user_info.noteStoreUrl)
+              real_note_store = sm.client.note_store(note_store_url: public_user_info.noteStoreUrl)
             end
-            note = linked_note_store.getNote authtoken, realguid, true, false, false, false
-          else
-            note = sm.note_store.getNote sm.auth_token, @guid, true, false, false, false
+          end
+          note = real_note_store.getNote real_auth_token, realguid, true, false, false, false
+          note.guid = old_note.guid
+          if @guid.start_with? "s"
+            note.notebookGuid = old_note.notebookGuid
+            if note.tagGuids
+              note.tagGuids.each_with_index do |tagGuid,index|
+                note.tagGuids[index] = linkedNotebook.shardId+"-"+tagGuid
+              end
+            end
           end
           note.editMode = Formatter.get_edit_mode note.attributes.sourceApplication
           content = format_content note.content, note.editMode
